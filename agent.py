@@ -5,10 +5,13 @@ import time
 import requests
 from datetime import datetime, timezone
 from refs import rebuild_refs
+import memory as mem_store
+
+CURRENT={"topic":"","mem":None}#当前任务的内存记忆
 
 
-# 搜索层从 filter_demo.py 复用，保证只有一份实现
-from filter_demo import search as search_raw, filter_results, text_of
+# 搜索层从 search_layer.py 复用，保证只有一份实现
+from search_layer import search as search_raw, filter_results, text_of
 
 # ========== 配置 ==========
 DS_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -29,7 +32,14 @@ _next_idx=0# 全局编号，多次搜索不重号
 def search_web(query,count=6):
     """搜索网页，返回标题/摘要/日期/URL/编号。不给全文"""
     global _next_idx
+    mem=CURRENT["mem"]
+
     kept,_=filter_results(search_raw(query,count=count*2))
+
+    if mem:                     #跳过已读的URL
+        seen=mem_store.known_urls(mem)
+        kept=[r for r in kept if r.get("url") not in seen]
+
     kept=kept[:count]
 
     if not kept:
@@ -64,6 +74,11 @@ def read_page(idx,start=0):
     if not r:
         return json.dumps({"error":f"编号{idx}不存在,请先用search_web搜索"},
                           ensure_ascii=False)
+
+    # ← 加这里：把这篇记进记忆（放在取内容之前）
+    if CURRENT["mem"]:
+        mem_store.add_page(CURRENT["mem"],r.get('url'),r.get('title'),r.get('summary'))
+
 
     content=text_of(r)
     part=content[start:start+MAX_PAGE_CHARS]
@@ -137,8 +152,18 @@ def run(topic):
     POOL.clear()  # 清空上次的结果池
     _next_idx = 0  # 编号从 1 重新开始
 
+    m=mem_store.load(topic)
+    CURRENT["topic"]=topic
+    CURRENT["mem"]=m
+
+    sys_prompt=SYSTEM
+    hint=mem_store.digest(m)
+    if hint:
+        sys_prompt=SYSTEM+"\n\n"+hint    #拼上已读清单
+        print(f"[记忆]加载{len(m['pages'])}篇历史资料")
+
     messages=[
-        {"role":"system","content":SYSTEM},
+        {"role":"system","content":sys_prompt},
         {"role":"user","content":f"请调研这个主题并写出报告：{topic}"},
     ]
     t0=time.time()# ← 新增：记开始时间
@@ -164,6 +189,10 @@ def run(topic):
             report,missing=rebuild_refs(msg.get('content') or "",POOL)# ← 新增
             if missing:
                 print(f"  ⚠ 正文引用了不存在的编号：{missing}")
+
+            m["runs"]=m.get("runs",0)+1
+            mem_store.save(topic,m)
+
             return report,stats
 
         for tc in msg["tool_calls"]:
@@ -192,7 +221,11 @@ def run(topic):
                 "content":result,
             })
 
-    stats["secs"]=round(time.time()-t0,1)# ← 新增：出口二，撞上限补耗时
+    stats["secs"]=round(time.time()-t0,1)
+
+    m["runs"] = m.get("runs", 0) + 1  # ← 新增：出口二保存
+    mem_store.save(topic, m)  # ← 新增
+
     print(f"\n到达最大步数{MAX_STEPS}，强制停止")
     return None,stats
 

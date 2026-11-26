@@ -2,6 +2,10 @@
 import re
 import os
 from agent import run
+import shutil
+
+if os.path.exists("memory"):
+    shutil.rmtree("memory")
 
 TOPICS = [
     "企业级 AI Agent 在 2026 年的落地现状与主要阻碍",

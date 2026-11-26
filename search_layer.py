@@ -1,4 +1,4 @@
-# filter_demo.py —— 搜索结果预处理：相关性 + 来源 + 时效 三道筛，并算上下文预算
+# search_layer.py —— 搜索结果预处理：相关性 + 来源 + 时效 三道筛，并算上下文预算
 import os
 import requests
 from datetime import datetime, timezone
